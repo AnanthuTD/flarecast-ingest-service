@@ -1,0 +1,10 @@
+node_modules   
+.env*
+dist
+credentials
+credentials
+hls-output
+temp_upload
+videos
+outputAudio
+ 

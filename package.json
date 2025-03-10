@@ -1,0 +1,41 @@
+{
+	"name": "ingest-service",
+	"version": "1.0.0",
+	"description": "",
+	"main": "src/index.ts",
+	"scripts": {
+		"dev": "dotenvx run -- ts-node-dev --rs --transpile-only src/index.ts",
+		"docker:dev": "ts-node-dev --rs --transpile-only src/index.ts",
+		"prisma:generate": "prisma generate",
+		"prisma:migrate": "prisma migrate dev",
+		"tsc": "npx tsc -p .",
+		"start": "node dist/index.js"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
+	"dependencies": {
+		"@aws-sdk/client-s3": "^3.758.0",
+		"@dotenvx/dotenvx": "^1.38.4",
+		"@google/generative-ai": "^0.21.0",
+		"cookie-parser": "^1.4.7",
+		"envalid": "^8.0.0",
+		"kafkajs": "^2.2.4",
+		"node-media-server": "^2.7.4",
+		"passport": "^0.7.0",
+		"passport-jwt": "^4.0.1",
+		"prom-client": "^15.1.3",
+		"winston": "^3.17.0",
+		"winston-loki": "^6.1.3"
+	},
+	"devDependencies": {
+		"@types/cookie-parser": "^1.4.8",
+		"@types/node": "^22.13.9",
+		"@types/node-media-server": "^2.3.7",
+		"@types/passport": "^1.0.17",
+		"ts-node": "^10.9.2",
+		"ts-node-dev": "^2.0.0",
+		"typescript": "^5.8.2"
+	}
+}
