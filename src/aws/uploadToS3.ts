@@ -32,7 +32,7 @@ export async function uploadFileToS3(localFilePath: string, s3Key: string) {
 
 	try {
 		await s3Client.send(new PutObjectCommand(params));
-		logger.info(`🟢 Uploaded ${s3Key} to s3://${BUCKET_NAME}/${s3Key}`);
+		logger.info(`🟢 Uploaded ${localFilePath} to s3://${BUCKET_NAME}/${s3Key}`);
 	} catch (error) {
 		logger.error(`🔴 Error uploading ${s3Key}:`, error);
 		throw error;

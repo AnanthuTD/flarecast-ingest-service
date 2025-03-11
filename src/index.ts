@@ -4,7 +4,11 @@ import { uploadFileToS3 } from "./aws/uploadToS3";
 import path from "path";
 import { createDir } from "./helpers/fs.helper";
 import { createMasterPlaylist } from "./transcode";
-import { writeFileSync } from "fs";
+import { writeFileSync, unlinkSync, existsSync } from "fs";
+import env from "./env";
+import { logger } from "./logger";
+import { ChildProcess, spawn } from "child_process";
+import fs from "fs";
 
 const config = {
 	rtmp: {
@@ -20,123 +24,150 @@ const config = {
 		allow_origin: "*",
 	},
 	trans: {
-		ffmpeg:
-			"C:\\Users\\anant\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin\\ffmpeg.exe",
+		ffmpeg: env.FFMPEG_LOCATION,
 		tasks: [
 			{
 				app: "game",
-				// vc: "copy",
-				// ac: "copy",
 				hls: true,
 				hlsFlags: "[hls_time=2:hls_list_size=0:hls_flags=delete_segments]",
 				hlsKeep: true,
+				// mp4: true,
+				// mp4Flags: "[movflags=frag_keyframe+empty_moov]",
 			},
 		],
 	},
 	fission: {
-		ffmpeg:
-			"C:\\Users\\anant\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-7.1-full_build\\bin\\ffmpeg.exe",
+		ffmpeg: env.FFMPEG_LOCATION,
 		tasks: [
 			{
 				rule: "game/*",
 				model: [
 					{
 						ab: "128k",
-						vb: "1500k",
-						vs: "1280x720",
-						vf: "30",
+						vb: "3000k",
+						vs: "1920x1080",
+						vf: "60",
 					},
-					{
-						ab: "96k",
-						vb: "1000k",
-						vs: "854x480",
-						vf: "24",
-					},
-					{
-						ab: "96k",
-						vb: "600k",
-						vs: "640x360",
-						vf: "20",
-					},
+					{ ab: "128k", vb: "1500k", vs: "1280x720", vf: "30" },
+					{ ab: "96k", vb: "1000k", vs: "854x480", vf: "24" },
+					{ ab: "96k", vb: "600k", vs: "640x360", vf: "20" },
 				],
 			},
 		],
 	},
 };
 
-var nms = new NodeMediaServer(config);
-
-const debouncedUpload = (fn, delay) => {
-	let timeout;
-	let retryCount = 0;
-	return async (...args) => {
-		clearTimeout(timeout);
-		timeout = setTimeout(async () => {
-			try {
-				await fn(...args);
-				retryCount = 0;
-			} catch (error) {
-				if (retryCount < 3) {
-					retryCount++;
-					setTimeout(() => fn(...args), 2000 * retryCount);
-				}
-			}
-		}, delay);
-	};
-};
+const nms = new NodeMediaServer(config);
 
 nms.on("postPublish", async (id, streamPath, args) => {
-	try {
-		const streamKey = streamPath.split("/").pop();
-		if (!streamKey) throw new Error(`Invalid stream path: ${streamPath}`);
+	let ffmpegProcess: null | ChildProcess = null;
 
-		const hlsBaseDir = path.join(process.cwd(), `media/game/${streamKey}`);
+	const watchers = [];
+	const streamKey = streamPath.split("/").pop()?.split("_")[0];
+	const resolution = streamPath.split("/").pop()?.split("_")?.[1] ?? null;
+
+	if (!streamKey) {
+		logger.error("Invalid stream path: ", streamPath);
+		return;
+	}
+	const isInitial = streamPath.split("/").pop()?.split("_").length === 1;
+
+	const hlsBaseDir = path.join(
+		process.cwd(),
+		`media/game/${streamPath.split("/").pop()}`
+	);
+
+	try {
 		await createDir(hlsBaseDir);
 
-		// Create and upload master playlist
-		const masterContent = createMasterPlaylist(streamKey, [1080, 720, 480]);
-		const masterPath = path.join(hlsBaseDir, "master.m3u8");
-		writeFileSync(masterPath, masterContent);
-		await uploadFileToS3(
-			masterPath,
-			`game/${streamKey.split("_")[0]}/master.m3u8`
-		);
+		if (isInitial) {
+			// Create master playlist and upload
+			const masterContent = createMasterPlaylist(streamKey, [1080, 720, 480]);
+			const masterPath = path.join(hlsBaseDir, "master.m3u8");
+			writeFileSync(masterPath, masterContent);
+			await uploadFileToS3(masterPath, `${streamKey}/master.m3u8`);
+		}
 
-		// Watch and upload HLS files
-		const resolutions = [1080, 720, 480];
-		const watchers = [];
+		if (!isInitial) {
+			// Setup file watcher for HLS
+			const resDir = path.join(hlsBaseDir);
+			const s3Prefix = streamKey + (resolution ? `/${resolution}` : "");
 
-		const resDir = path.join(hlsBaseDir);
-		const s3Prefix =
-			streamKey.split("_")[0] + streamKey.split("_").at(-1)
-				? "/" + streamKey.split("_").at(-1)
-				: "";
+			const watcher = chokidar.watch(resDir, {
+				ignored: /(^|[\/\\])\..|\.mp4$/,
+				persistent: true,
+				ignoreInitial: false,
+			});
 
-		console.log(resDir);
+			const uploadHandler = async (filePath) => {
+				logger.info("Uploading:", filePath);
+				try {
+					await uploadFileToS3(
+						filePath,
+						`${s3Prefix}/${path.basename(filePath)}`
+					);
+					unlinkSync(filePath); // Only remove if upload succeeds
+				} catch (error) {
+					logger.error("Failed to upload file:", filePath, error);
+					console.error(error);
+				}
+			};
 
-		const watcher = chokidar.watch(resDir, {
-			ignored: /(^|[\/\\])\../,
-			persistent: true,
-			ignoreInitial: false,
-		});
+			watcher.on("add", uploadHandler).on("change", uploadHandler);
+			watchers.push(watcher);
+		}
 
-		const uploadHandler = debouncedUpload(async (filePath) => {
-			console.log("filePath: " + filePath);
-			await uploadFileToS3(filePath, s3Prefix + "/" + path.basename(filePath));
-		}, 1500);
+		if (isInitial) {
+			// WebM recording setup
+			const customWebmName = "original.webm";
+			const webmFilePath = path.join(hlsBaseDir, customWebmName);
 
-		watcher
-			.on("add", (filePath) => uploadHandler(filePath))
-			.on("change", (filePath) => uploadHandler(filePath));
+			logger.info("Starting WebM recording for:", streamKey);
 
-		watchers.push(watcher);
+			const ffmpegArgs = [
+				"-i",
+				`rtmp://localhost:1935/game/stream`,
+				"-c:v",
+				"libvpx-vp9",
+				"-b:v",
+				"2M",
+				"-c:a",
+				"libopus",
+				"-b:a",
+				"128k",
+				"-f",
+				"webm",
+				webmFilePath,
+			];
 
-		// Cleanup on stream end
-		nms.on("donePublish", () => {
+			ffmpegProcess = spawn(env.FFMPEG_LOCATION, ffmpegArgs);
+
+			ffmpegProcess.stdout?.on("data", (data) =>
+				logger.info(`FFmpeg stdout: ${data}`)
+			);
+			ffmpegProcess.stderr?.on("data", (data) =>
+				logger.error(`FFmpeg stderr: ${data}`)
+			);
+
+			ffmpegProcess.on("close", async (code) => {
+				if (code === 0) {
+					logger.info(`WebM file saved successfully: ${webmFilePath}`);
+					await uploadFileToS3(webmFilePath, `${streamKey}/original.webm`);
+					fs.rmSync(hlsBaseDir, { recursive: true, force: true }); // Cleanup
+				} else {
+					logger.error(`FFmpeg exited with error code ${code}`);
+				}
+			});
+		}
+	} catch (error) {
+		logger.error("Stream processing error:", error);
+	} finally {
+		nms.on("donePublish", async (id, streamPath) => {
+			logger.info("Stream processing done:", streamKey);
+
+			// Stop watchers
 			watchers.forEach((watcher) => watcher.close());
 		});
-	} catch (error) {
-		console.error("Stream processing error:", error);
 	}
 });
 
