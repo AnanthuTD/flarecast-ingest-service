@@ -27,8 +27,8 @@ importers:
         specifier: ^2.2.4
         version: 2.2.4
       node-media-server:
-        specifier: ^2.7.4
-        version: 2.7.4
+        specifier: ^2.6.6
+        version: 2.6.6
       passport:
         specifier: ^0.7.0
         version: 0.7.0
@@ -978,10 +978,6 @@ packages:
     resolution: {integrity: sha512-FtwrG/euBzaEjYeRqOgly7G0qviiXoJWnvEH2Z1plBdXgbyjv34pHTSb9zoeHMyDy33+DWy5Wt9Wo+TURtOYSQ==}
     engines: {node: '>= 0.8'}
 
-  http2-express@1.0.1:
-    resolution: {integrity: sha512-3NP5595eHFkZOBD4RXCNDrTQvuxKfcr3Q62RrHlywNc0vw/PR2HKxtF4JqFhXWVJsxb9pTf/1hZ8iLaJrWdUmQ==}
-    engines: {node: '>= 20.0.0'}
-
   human-signals@2.1.0:
     resolution: {integrity: sha512-B4FFZ6q/T2jhhksgkbEW3HBvWIfDW85snkQgawt07S7J5QXTk6BkNV+0yAeZrM5QpMAdYlocGoljn0sJ/WQkFw==}
     engines: {node: '>=10.17.0'}
@@ -1151,8 +1147,8 @@ packages:
     resolution: {integrity: sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==}
     engines: {node: '>= 0.6'}
 
-  node-media-server@2.7.4:
-    resolution: {integrity: sha512-4nsqfukfnI6tY7d1deqBQSj3KywOiNVlPQkY0tLIjF62rzXo1SDXJXgUU+cVs5e06uO4x/55O4SiAaRH3li/Vg==}
+  node-media-server@2.6.6:
+    resolution: {integrity: sha512-2j1XZGRNvb2Pb/Hb8btz3yUWI2tarNArp0OCCWQklF45n8u5cSRwxT/vPJXIUUezgMdGCpryOruB+IUrsOtgyw==}
     engines: {node: '>=8.0.0'}
     hasBin: true
 
@@ -2835,8 +2831,6 @@ snapshots:
       statuses: 2.0.1
       toidentifier: 1.0.1
 
-  http2-express@1.0.1: {}
-
   human-signals@2.1.0: {}
 
   iconv-lite@0.4.24:
@@ -2971,13 +2965,12 @@ snapshots:
 
   negotiator@0.6.3: {}
 
-  node-media-server@2.7.4:
+  node-media-server@2.6.6:
     dependencies:
       basic-auth-connect: 1.1.0
       chalk: 4.1.2
       dateformat: 4.6.3
       express: 4.21.2
-      http2-express: 1.0.1
       lodash: 4.17.21
       minimist: 1.2.8
       mkdirp: 2.1.6
