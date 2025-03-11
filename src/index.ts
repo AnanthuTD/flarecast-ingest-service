@@ -1,4 +1,10 @@
 import NodeMediaServer from "node-media-server";
+import chokidar from "chokidar";
+import { uploadFileToS3 } from "./aws/uploadToS3";
+import path from "path";
+import { createDir } from "./helpers/fs.helper";
+import { createMasterPlaylist } from "./transcode";
+import { writeFileSync } from "fs";
 
 const config = {
 	rtmp: {
@@ -59,4 +65,79 @@ const config = {
 };
 
 var nms = new NodeMediaServer(config);
+
+const debouncedUpload = (fn, delay) => {
+	let timeout;
+	let retryCount = 0;
+	return async (...args) => {
+		clearTimeout(timeout);
+		timeout = setTimeout(async () => {
+			try {
+				await fn(...args);
+				retryCount = 0;
+			} catch (error) {
+				if (retryCount < 3) {
+					retryCount++;
+					setTimeout(() => fn(...args), 2000 * retryCount);
+				}
+			}
+		}, delay);
+	};
+};
+
+nms.on("postPublish", async (id, streamPath, args) => {
+	try {
+		const streamKey = streamPath.split("/").pop();
+		if (!streamKey) throw new Error(`Invalid stream path: ${streamPath}`);
+
+		const hlsBaseDir = path.join(process.cwd(), `media/game/${streamKey}`);
+		await createDir(hlsBaseDir);
+
+		// Create and upload master playlist
+		const masterContent = createMasterPlaylist(streamKey, [1080, 720, 480]);
+		const masterPath = path.join(hlsBaseDir, "master.m3u8");
+		writeFileSync(masterPath, masterContent);
+		await uploadFileToS3(
+			masterPath,
+			`game/${streamKey.split("_")[0]}/master.m3u8`
+		);
+
+		// Watch and upload HLS files
+		const resolutions = [1080, 720, 480];
+		const watchers = [];
+
+		const resDir = path.join(hlsBaseDir);
+		const s3Prefix =
+			streamKey.split("_")[0] + streamKey.split("_").at(-1)
+				? "/" + streamKey.split("_").at(-1)
+				: "";
+
+		console.log(resDir);
+
+		const watcher = chokidar.watch(resDir, {
+			ignored: /(^|[\/\\])\../,
+			persistent: true,
+			ignoreInitial: false,
+		});
+
+		const uploadHandler = debouncedUpload(async (filePath) => {
+			console.log("filePath: " + filePath);
+			await uploadFileToS3(filePath, s3Prefix + "/" + path.basename(filePath));
+		}, 1500);
+
+		watcher
+			.on("add", (filePath) => uploadHandler(filePath))
+			.on("change", (filePath) => uploadHandler(filePath));
+
+		watchers.push(watcher);
+
+		// Cleanup on stream end
+		nms.on("donePublish", () => {
+			watchers.forEach((watcher) => watcher.close());
+		});
+	} catch (error) {
+		console.error("Stream processing error:", error);
+	}
+});
+
 nms.run();
