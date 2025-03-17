@@ -4,7 +4,7 @@ import { uploadFileToS3 } from "./aws/uploadToS3";
 import path from "path";
 import { createDir } from "./helpers/fs.helper";
 import { createMasterPlaylist } from "./transcode";
-import { writeFileSync, unlinkSync, existsSync } from "fs";
+import { writeFileSync, unlinkSync, existsSync, readdirSync } from "fs";
 import env from "./env";
 import { logger } from "./logger";
 import { ChildProcess, spawn } from "child_process";
@@ -30,8 +30,8 @@ const config = {
 				hls: true,
 				hlsFlags: "[hls_time=2:hls_list_size=0:hls_flags=delete_segments]",
 				hlsKeep: true,
-				// mp4: true,
-				// mp4Flags: "[movflags=frag_keyframe+empty_moov]",
+				mp4: true,
+				mp4Flags: "[movflags=frag_keyframe+empty_moov]",
 			},
 		],
 	},
@@ -53,40 +53,7 @@ const config = {
 
 const nms = new NodeMediaServer(config);
 
-// Store userId per session
-interface SessionData {
-	userId: string;
-}
-const sessions = new Map<string, SessionData>();
-
-/* nms.on("prePublish", (id: string, args: string) => {
-	console.log(`[NodeMediaServer] on prePublish`, id, args);
-	const pathParts = args.split("?");
-	const streamKey = pathParts[0].split("/").pop();
-	const queryParams = new URLSearchParams(pathParts[1] || "");
-	const token = queryParams.get("token")?.split("/")[0];; 
-
-	console.log(`[AUTH] Checking streamKey: ${streamKey} with token: ${token}`);
-	if (!token) {
-		logger.error("No token provided for stream:", args);
-		const session = nms.getSession(id);
-		session?.reject();
-		return;
-	}
-
-	// const payload = verifyStreamToken(token);
-	const {data} = axios.get(`${env.VIDEO_SERVICE}/api/interservice/`)
-	if (!payload || !payload.id || !payload.userId) {
-		logger.error("Invalid or expired token for stream:", args);
-		const session = nms.getSession(id);
-		session?.reject();
-		return;
-	}
-
-	// Store userId for this session
-	sessions.set(id, payload);
-	logger.info(`Authenticated stream ${args} for user ${payload.id}`);
-}); */
+const sessions = new Map();
 
 nms.on("postPublish", async (id: string, streamPath: string) => {
 	let ffmpegProcess: ChildProcess | null = null;
@@ -117,7 +84,7 @@ nms.on("postPublish", async (id: string, streamPath: string) => {
 				})
 			);
 
-			const masterContent = createMasterPlaylist(streamKey, [1080, 720, 480]);
+			const masterContent = createMasterPlaylist(streamKey, [720]);
 			const masterPath = path.join(hlsBaseDir, "master.m3u8");
 			writeFileSync(masterPath, masterContent);
 			await uploadFileToS3(masterPath, `${streamKey}/master.m3u8`);
@@ -150,70 +117,6 @@ nms.on("postPublish", async (id: string, streamPath: string) => {
 			watcher.on("add", uploadHandler).on("change", uploadHandler);
 			watchers.push(watcher);
 		}
-
-		if (isInitial) {
-			const customWebmName = "original.webm";
-			const webmFilePath = path.join(hlsBaseDir, customWebmName);
-
-			logger.info("Starting WebM recording for:", streamKey);
-
-			const ffmpegArgs = [
-				"-rtmp_live",
-				"live",
-				"-i",
-				`rtmp://localhost:1935/game/${streamKey}`,
-				"-c:v",
-				"libvpx-vp9",
-				"-b:v",
-				"2M",
-				"-c:a",
-				"libopus",
-				"-b:a",
-				"128k",
-				"-f",
-				"webm",
-				"-flush_packets",
-				"1",
-				"-y",
-				webmFilePath,
-			];
-
-			ffmpegProcess = spawn(env.FFMPEG_LOCATION, ffmpegArgs);
-
-			ffmpegProcess.stdout?.on("data", (data) =>
-				logger.info(`FFmpeg stdout: ${data}`)
-			);
-			ffmpegProcess.stderr?.on("data", (data) =>
-				logger.error(`FFmpeg stderr: ${data}`)
-			);
-
-			ffmpegProcess.on("close", async (code) => {
-				if (code === 0) {
-					logger.info(`WebM file saved successfully: ${webmFilePath}`);
-					const s3Key = `${streamKey}/original.webm`;
-					await uploadFileToS3(webmFilePath, s3Key);
-					sendVideoUploadEvent({
-						s3Key,
-						videoId: streamKey,
-						aiFeature: true,
-						transcode: true,
-					});
-					if (existsSync(hlsBaseDir))
-						fs.rmSync(hlsBaseDir, { recursive: true, force: true });
-				} else {
-					logger.error(`FFmpeg exited with error code ${code}`);
-					sendMessage(
-						TOPICS.LIVE_STREAM_EVENT,
-						JSON.stringify({
-							videoId: streamKey,
-							status: "FAILED",
-							error: `FFmpeg exited with code ${code}`,
-						})
-					);
-				}
-				ffmpegProcess = null;
-			});
-		}
 	} catch (error) {
 		logger.error("Stream processing error:", error);
 		sendMessage(
@@ -226,20 +129,110 @@ nms.on("postPublish", async (id: string, streamPath: string) => {
 		);
 	}
 
-	nms.on("donePublish", async (id: string, streamPath: string) => {
+	nms.on("donePublish", async (doneId: string, doneStreamPath: string) => {
+		if (id !== doneId) return;
 		logger.info("Stream processing done:", streamKey);
+
 		watchers.forEach((watcher) => watcher.close());
 
-		/* if (existsSync(hlsBaseDir)) {
-			fs.rmSync(hlsBaseDir, { recursive: true, force: true });
-		} */
-			sendMessage(
+		if (!isInitial) return;
+
+		sendMessage(
 			TOPICS.LIVE_STREAM_EVENT,
 			JSON.stringify({
 				videoId: streamKey,
 				status: "SUCCESS",
 			})
 		);
+
+		try {
+			// Find the first MP4 file in the initial stream directory
+			const initialDir = path.join(process.cwd(), `media/game/${streamKey}`);
+			let mp4FilePath = null;
+			if (existsSync(initialDir)) {
+				const files = readdirSync(initialDir);
+				mp4FilePath = files.find((file) => file.endsWith(".mp4"));
+				if (mp4FilePath) {
+					mp4FilePath = path.join(initialDir, mp4FilePath);
+				}
+			}
+
+			if (mp4FilePath && existsSync(mp4FilePath)) {
+				/* const webmFilePath = path.join(initialDir, `${streamKey}.webm`);
+				logger.info(`Converting ${mp4FilePath} to WebM...`);
+
+				// Convert MP4 to WebM
+				await new Promise((resolve, reject) => {
+					const ffmpeg = spawn(
+						env.FFMPEG_LOCATION,
+						[
+							"-i",
+							mp4FilePath,
+							"-c:v",
+							"libvpx-vp9",
+							"-b:v",
+							"1500k",
+							"-c:a",
+							"libopus",
+							"-b:a",
+							"128k",
+							"-f",
+							"webm",
+							webmFilePath,
+						],
+						{ stdio: "inherit" }
+					);
+
+					ffmpeg.on("close", (code) => {
+						if (code === 0) {
+							logger.info(`Converted ${mp4FilePath} to ${webmFilePath}`);
+							resolve(null);
+						} else {
+							reject(new Error(`FFmpeg exited with code ${code}`));
+						}
+					});
+
+					ffmpeg.on("error", (err) => reject(err));
+				}); */
+
+				const s3Key = `${streamKey}/original.mp4`;
+
+				// Upload WebM to S3
+				await uploadFileToS3(mp4FilePath, s3Key);
+				logger.info(
+					`Uploaded ${mp4FilePath} to S3 as ${streamKey}/original.webm`
+				);
+
+				sendVideoUploadEvent({
+					s3Key,
+					videoId: streamKey,
+					aiFeature: true,
+					transcode: true,
+					type="LIVE"
+				});
+
+				// Optional cleanup
+				// unlinkSync(mp4FilePath);
+				// unlinkSync(webmFilePath);
+			} else {
+				logger.warn(`No MP4 file found in ${initialDir}`);
+			}
+		} catch (error) {
+			logger.error("Post-stream processing error:", error);
+			sendMessage(
+				TOPICS.LIVE_STREAM_EVENT,
+				JSON.stringify({
+					videoId: streamKey,
+					status: "FAILED",
+					error: (error as Error).message || "Post-stream processing error",
+				})
+			);
+		}
+
+		// Optional directory cleanup
+		if (existsSync(hlsBaseDir)) {
+			fs.rmSync(hlsBaseDir, { recursive: true, force: true });
+		}
 		sessions.delete(id);
 	});
 });
