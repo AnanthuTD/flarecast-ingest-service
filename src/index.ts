@@ -12,7 +12,6 @@ import fs from "fs";
 import { sendMessage } from "./kafka/producer";
 import { TOPICS } from "./kafka/topics";
 import { sendVideoUploadEvent } from "./kafka/handlers/videoUploadEvent.producer";
-import { verifyStreamToken } from "./utils/jwt";
 
 const config = {
 	rtmp: {
@@ -42,10 +41,10 @@ const config = {
 			{
 				rule: "game/*",
 				model: [
-					{ ab: "128k", vb: "3000k", vs: "1920x1080", vf: "60" },
-					{ ab: "128k", vb: "1500k", vs: "1280x720", vf: "30" },
-					{ ab: "96k", vb: "1000k", vs: "854x480", vf: "24" },
-					{ ab: "96k", vb: "600k", vs: "640x360", vf: "20" },
+					// { ab: "128k", vb: "3000k", vs: "1920x1080", vf: "60" },
+					// { ab: "128k", vb: "1500k", vs: "1280x720", vf: "30" },
+					// { ab: "96k", vb: "1000k", vs: "854x480", vf: "24" },
+					// { ab: "96k", vb: "600k", vs: "640x360", vf: "20" },
 				],
 			},
 		],
@@ -60,29 +59,36 @@ interface SessionData {
 }
 const sessions = new Map<string, SessionData>();
 
-nms.on("prePublish", (id: string, streamPath: string, args: any) => {
-	const token = args.token; // Expect ?token=JWT in RTMP URL
+/* nms.on("prePublish", (id: string, args: string) => {
+	console.log(`[NodeMediaServer] on prePublish`, id, args);
+	const pathParts = args.split("?");
+	const streamKey = pathParts[0].split("/").pop();
+	const queryParams = new URLSearchParams(pathParts[1] || "");
+	const token = queryParams.get("token")?.split("/")[0];; 
+
+	console.log(`[AUTH] Checking streamKey: ${streamKey} with token: ${token}`);
 	if (!token) {
-		logger.error("No token provided for stream:", streamPath);
+		logger.error("No token provided for stream:", args);
 		const session = nms.getSession(id);
 		session?.reject();
 		return;
 	}
 
-	const payload = verifyStreamToken(token);
-	if (!payload || !payload.id) {
-		logger.error("Invalid or expired token for stream:", streamPath);
+	// const payload = verifyStreamToken(token);
+	const {data} = axios.get(`${env.VIDEO_SERVICE}/api/interservice/`)
+	if (!payload || !payload.id || !payload.userId) {
+		logger.error("Invalid or expired token for stream:", args);
 		const session = nms.getSession(id);
 		session?.reject();
 		return;
 	}
 
 	// Store userId for this session
-	sessions.set(id, { userId: payload.id });
-	logger.info(`Authenticated stream ${streamPath} for user ${payload.id}`);
-});
+	sessions.set(id, payload);
+	logger.info(`Authenticated stream ${args} for user ${payload.id}`);
+}); */
 
-nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
+nms.on("postPublish", async (id: string, streamPath: string) => {
 	let ffmpegProcess: ChildProcess | null = null;
 	const watchers: FSWatcher[] = [];
 	const streamKey = streamPath.split("/").pop()?.split("_")[0];
@@ -90,12 +96,6 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 
 	if (!streamKey) {
 		logger.error("Invalid stream path: ", streamPath);
-		return;
-	}
-
-	const userId = sessions.get(id)?.userId;
-	if (!userId) {
-		logger.error("No userId found for session:", id);
 		return;
 	}
 
@@ -114,7 +114,6 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 				JSON.stringify({
 					videoId: streamKey,
 					status: "PROCESSING",
-					userId,
 				})
 			);
 
@@ -141,7 +140,7 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 						filePath,
 						`${s3Prefix}/${path.basename(filePath)}`
 					);
-					unlinkSync(filePath);
+					// unlinkSync(filePath);
 				} catch (error) {
 					logger.error("Failed to upload file:", filePath, error);
 					console.error(error);
@@ -159,8 +158,10 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 			logger.info("Starting WebM recording for:", streamKey);
 
 			const ffmpegArgs = [
+				"-rtmp_live",
+				"live",
 				"-i",
-				`rtmp://localhost:1935/game/stream`,
+				`rtmp://localhost:1935/game/${streamKey}`,
 				"-c:v",
 				"libvpx-vp9",
 				"-b:v",
@@ -171,6 +172,9 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 				"128k",
 				"-f",
 				"webm",
+				"-flush_packets",
+				"1",
+				"-y",
 				webmFilePath,
 			];
 
@@ -191,11 +195,11 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 					sendVideoUploadEvent({
 						s3Key,
 						videoId: streamKey,
-						userId, 
 						aiFeature: true,
 						transcode: true,
 					});
-					fs.rmSync(hlsBaseDir, { recursive: true, force: true });
+					if (existsSync(hlsBaseDir))
+						fs.rmSync(hlsBaseDir, { recursive: true, force: true });
 				} else {
 					logger.error(`FFmpeg exited with error code ${code}`);
 					sendMessage(
@@ -203,11 +207,11 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 						JSON.stringify({
 							videoId: streamKey,
 							status: "FAILED",
-							userId,
 							error: `FFmpeg exited with code ${code}`,
 						})
 					);
 				}
+				ffmpegProcess = null;
 			});
 		}
 	} catch (error) {
@@ -217,7 +221,6 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 			JSON.stringify({
 				videoId: streamKey,
 				status: "FAILED",
-				userId,
 				error: (error as Error).message || "Stream processing error",
 			})
 		);
@@ -226,19 +229,15 @@ nms.on("postPublish", async (id: string, streamPath: string, args: any) => {
 	nms.on("donePublish", async (id: string, streamPath: string) => {
 		logger.info("Stream processing done:", streamKey);
 		watchers.forEach((watcher) => watcher.close());
-		if (ffmpegProcess) {
-			ffmpegProcess.kill("SIGTERM");
-			ffmpegProcess = null;
-		}
-		if (existsSync(hlsBaseDir)) {
+
+		/* if (existsSync(hlsBaseDir)) {
 			fs.rmSync(hlsBaseDir, { recursive: true, force: true });
-		}
-		sendMessage(
+		} */
+			sendMessage(
 			TOPICS.LIVE_STREAM_EVENT,
 			JSON.stringify({
 				videoId: streamKey,
 				status: "SUCCESS",
-				userId,
 			})
 		);
 		sessions.delete(id);

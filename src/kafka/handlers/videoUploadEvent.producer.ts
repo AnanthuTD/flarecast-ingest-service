@@ -5,7 +5,6 @@ import { TOPICS } from "../topics";
 export async function sendVideoUploadEvent(data: {
 	s3Key: string;
 	videoId: string;
-	userId: string;
 	aiFeature: boolean;
 	transcode: boolean;
 }) {
