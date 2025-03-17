@@ -91,7 +91,7 @@ export function createMasterPlaylist(basePath: string, resolutions: number[]) {
 		playlist += `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${resolution},CODECS="${getCodec(
 			res
 		)}"\n`;
-		playlist += `${basePath}/${res}/index.m3u8\n`;
+		playlist += `${res}/index.m3u8\n`;
 	});
 	return playlist;
 }
