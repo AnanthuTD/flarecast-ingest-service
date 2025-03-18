@@ -208,7 +208,7 @@ nms.on("postPublish", async (id: string, streamPath: string) => {
 					videoId: streamKey,
 					aiFeature: true,
 					transcode: true,
-					type="LIVE"
+					type:"LIVE"
 				});
 
 				// Optional cleanup
