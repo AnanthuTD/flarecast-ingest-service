@@ -12,6 +12,7 @@ import fs from "fs";
 import { sendMessage } from "./kafka/producer";
 import { TOPICS } from "./kafka/topics";
 import { sendVideoUploadEvent } from "./kafka/handlers/videoUploadEvent.producer";
+import axios from "axios";
 
 const config = {
 	rtmp: {
@@ -203,12 +204,17 @@ nms.on("postPublish", async (id: string, streamPath: string) => {
 					`Uploaded ${mp4FilePath} to S3 as ${streamKey}/original.webm`
 				);
 
+				const { data } = await axios.get(
+					`${env.VIDEO_SERVICE}/api/interservice/video`
+				);
+
 				sendVideoUploadEvent({
 					s3Key,
 					videoId: streamKey,
 					aiFeature: true,
 					transcode: true,
-					type:"LIVE"
+					type: "LIVE",
+					userId: data.video.userId,
 				});
 
 				// Optional cleanup

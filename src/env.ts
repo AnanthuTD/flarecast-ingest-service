@@ -22,7 +22,7 @@ const env = cleanEnv(process.env, {
 	AWS_SECRET_ACCESS_KEY: str(),
 	AWS_S3_BUCKET_NAME: str(),
 	// LIVESTREAM_SECRET: str(),
-	// VIDEO_SERVICE: url(),
+	VIDEO_SERVICE: url(),
 });
 
 export default env;

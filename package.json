@@ -20,6 +20,7 @@
 		"@dotenvx/dotenvx": "^1.38.4",
 		"@google/generative-ai": "^0.21.0",
 		"@types/jsonwebtoken": "^9.0.9",
+		"axios": "^1.8.4",
 		"chokidar": "^4.0.3",
 		"cookie-parser": "^1.4.7",
 		"envalid": "^8.0.0",

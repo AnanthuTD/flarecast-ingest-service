@@ -7,7 +7,8 @@ export async function sendVideoUploadEvent(data: {
 	videoId: string;
 	aiFeature: boolean;
 	transcode: boolean;
-	type: "LIVE"
+	type: "LIVE";
+	userId: string;
 }) {
 	logger.info(
 		"Sending video upload event to kafka topic: " + TOPICS.VIDEO_UPLOAD_EVENT
