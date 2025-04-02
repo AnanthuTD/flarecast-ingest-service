@@ -205,14 +205,14 @@ nms.on("postPublish", async (id: string, streamPath: string) => {
 				);
 
 				const { data } = await axios.get(
-					`${env.VIDEO_SERVICE}/api/interservice/video`
+					`${env.VIDEO_SERVICE}/api/interservice/video/${streamKey}`
 				);
 
 				sendVideoUploadEvent({
 					s3Key,
 					videoId: streamKey,
 					aiFeature: true,
-					transcode: true,
+					transcode: false,
 					type: "LIVE",
 					userId: data.video.userId,
 				});
@@ -224,7 +224,8 @@ nms.on("postPublish", async (id: string, streamPath: string) => {
 				logger.warn(`No MP4 file found in ${initialDir}`);
 			}
 		} catch (error) {
-			logger.error("Post-stream processing error:", error);
+			logger.error("Post-stream processing error:");
+			console.error(error)
 			sendMessage(
 				TOPICS.LIVE_STREAM_EVENT,
 				JSON.stringify({
